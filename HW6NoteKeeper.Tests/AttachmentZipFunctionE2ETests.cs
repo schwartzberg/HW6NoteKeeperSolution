@@ -31,7 +31,7 @@ namespace HW6NoteKeeper.Tests
         private const string QueueName = "attachment-zip-requests";
         private const string StorageAccountName = "st4hw3";
         private static readonly string BaseUrl =
-            "https://app-notekeeper-cscie94-ps-HW6-bdffa3cmetfag8em.swedencentral-01.azurewebsites.net/";
+            "https://app-notekeeper-cscie94-ps-hw6-hrb0hhgne9b7anen.swedencentral-01.azurewebsites.net/";
 
         private readonly HttpClient _apiClient;
         private readonly BlobServiceClient _blobServiceClient;

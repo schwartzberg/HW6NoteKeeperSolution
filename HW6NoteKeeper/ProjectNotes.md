@@ -260,7 +260,7 @@ All resources follow standard Azure naming conventions.
 ## 7. Azure App Service Website URL
 
 **Production URL:**   
-https://app-notekeeper-cscie94-ps-HW6-1-gjegduaqfccbd2bt.swedencentral-01.azurewebsites.net
+https://app-notekeeper-cscie94-ps-hw6-hrb0hhgne9b7anen.swedencentral-01.azurewebsites.net
 
 **Note:** The Swagger UI is configured to load at the root path (`/`), so navigating to the base URL will display the interactive
 API documentation.
@@ -302,12 +302,12 @@ The application expects the following environment variables to be set in Azure A
 
 2. **Via Azure CLI:**
    ```bash
-   az webapp config appsettings set --name app-notekeeper-cscie94-ps-HW6-1 --resource-group rg_service_app_plan --settings NoteLimits__MaxNotes=10 NoteLimits__MaxAttachments=3
+   az webapp config appsettings set --name app-notekeeper-cscie94-ps-HW6 --resource-group rg_service_app_plan --settings NoteLimits__MaxNotes=10 NoteLimits__MaxAttachments=3
    ```
 
 3. **Via Azure PowerShell:**
    ```powershell
-   Set-AzWebApp -ResourceGroupName rg_service_app_plan -Name app-notekeeper-cscie94-ps-HW6-1 -AppSettings @{"NoteLimits__MaxNotes"="10"; "NoteLimits__MaxAttachments"="3"}
+   Set-AzWebApp -ResourceGroupName rg_service_app_plan -Name app-notekeeper-cscie94-ps-HW6 -AppSettings @{"NoteLimits__MaxNotes"="10"; "NoteLimits__MaxAttachments"="3"}
    ```
 
 **Note:** The double underscore (`__`) is used to represent nested configuration sections in Azure App Service environment variables. This maps to the `NoteLimits:MaxNotes` and `NoteLimits:MaxAttachments` structure in `appsettings.json`.

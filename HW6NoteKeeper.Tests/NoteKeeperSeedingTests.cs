@@ -30,7 +30,7 @@ namespace HW6NoteKeeper.Tests
     public class NoteKeeperSeedingTests : IAsyncLifetime
     {
         private static readonly string BaseUrl =
-            "https://app-notekeeper-cscie94-ps-HW6-1-gjegduaqfccbd2bt.swedencentral-01.azurewebsites.net/";
+            "https://app-notekeeper-cscie94-ps-hw6-hrb0hhgne9b7anen.swedencentral-01.azurewebsites.net/";
 
         /// <summary>
         /// Azure-managed containers that survive seeding (e.g. Function App deployment package and runtime containers).

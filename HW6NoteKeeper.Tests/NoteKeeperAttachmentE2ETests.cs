@@ -43,7 +43,7 @@ namespace HW6NoteKeeper.Tests
     public class NoteKeeperAttachmentE2ETests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLifetime
     {
         private static readonly string BaseUrl =
-            "https://app-notekeeper-cscie94-ps-HW6-1-gjegduaqfccbd2bt.swedencentral-01.azurewebsites.net/";
+            "https://app-notekeeper-cscie94-ps-hw6-hrb0hhgne9b7anen.swedencentral-01.azurewebsites.net/";
 
         private readonly HttpClient _client;
         private readonly BlobServiceClient _blobServiceClient;

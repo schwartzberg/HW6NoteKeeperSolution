@@ -30,7 +30,7 @@ namespace HW6NoteKeeper.Tests
 
             _client = new HttpClient
             { 
-                BaseAddress = new Uri("https://app-notekeeper-cscie94-ps-HW6-1-gjegduaqfccbd2bt.swedencentral-01.azurewebsites.net/")
+                BaseAddress = new Uri("https://app-notekeeper-cscie94-ps-hw6-hrb0hhgne9b7anen.swedencentral-01.azurewebsites.net/")
             };
 
             _jsonOptions = new JsonSerializerOptions
