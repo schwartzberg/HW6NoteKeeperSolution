@@ -1,7 +1,11 @@
 # Project Notes
 
 ## 1. Homework Assignment Title and Number
-**Assignment #4 - Note Keeper**
+**Assignment #6 — Note Keeper (Azure API Management)**
+
+This assignment builds on top of **Homework #4 (HW4NoteKeeper)**. The starting codebase for HW6 is an exact copy of the completed HW4 solution that has been renamed (`HW4*` → `HW6*`). All HW4 *core* functionality therefore carries forward unchanged; HW6 adds Azure API Management as a front-end gateway and the small set of code changes required to support a clean OpenAPI/swagger.json import.
+
+> **Note on extra credit carry-over:** No HW4 extra credit options are being carried into HW6. Any HW4 extra-credit work that previously lived in this codebase has been intentionally removed from the project notes so the TA only sees what is in scope for HW6.
 
 ---
 
@@ -13,15 +17,15 @@
 
 ## 3. Attribution Regarding the Use of AI
 
-
 ### What I Used AI For (Initial Guidance and Debugging Only):
+*(To be filled in as HW6 work progresses.)*
 
- 
 ### What I Coded by Hand and/or Modified Considerably:
+*(To be filled in as HW6 work progresses.)*
 
- 
 ### Summary
- 
+*(To be filled in once HW6 is complete.)*
+
 ---
 
 ## 4. Notes for the TA
@@ -31,212 +35,153 @@
 2. Restoring NuGet packages
 3. Building the solution
 
-The application uses standard ASP.NET Core 10.0 features and does not require any additional tools or dependencies
-beyond what is included in the `.csproj` file.
+The application uses standard ASP.NET Core 10.0 features and does not require any additional tools or dependencies beyond what is included in the `.csproj` file.
+
+The HW6-specific configuration (API Management gateway URL, product subscription keys, etc.) is documented in **Section 4.2 — HW6 Implementation Status** below.
 
 ---
 
-## 4.1. Homework 3 Core Implementation
+## 4.1. Inherited from HW4 (Already Implemented in the Copied Codebase)
 
-**HOMEWORK 4 CORE FEATURE:**
+The HW6 project starts as a clone of the HW4 project. The following functionality is **already in place** when HW6 begins; HW6 itself does not add or modify any of it (apart from the small swagger.json compatibility tweaks listed in §4.2):
 
-**Azure Blob Storage for Note Attachments**
+### 4.1.1 Note Management (carried from HW2/HW3/HW4)
+- `GET /NoteKeeper` — Retrieve all notes (optional `tagName` query parameter for filtering)
+- `GET /NoteKeeper/{noteId}` — Retrieve a specific note by ID
+- `POST /NoteKeeper` — Create a new note with AI-generated tags
+  - Returns 201 (Created) on success
+  - Returns 400 (Bad Request) if validation fails
+  - Returns 403 (Forbidden) if the `MaxNotes` limit has been reached
+  - Returns 500 (Internal Server Error) on unexpected errors
+- `PATCH /NoteKeeper/{noteId}` — Update an existing note (regenerates tags if details change)
+- `DELETE /NoteKeeper/{noteId}` — Delete a note (DB row only; storage cleanup is performed by the enhanced delete endpoint below)
 
-The core feature for HW6 is the implementation of Azure Blob Storage for storing note attachments:
+### 4.1.2 Attachment Management (carried from HW3)
+- `PUT /notes/{noteId}/attachments/{attachmentId}` — Upload or update an attachment
+  - 201 (Created) with `Location` header for new attachments
+  - 204 (No Content) for updates to existing attachments
+  - 400 for invalid GUID format
+  - 403 when `MaxAttachments` limit reached (new uploads only)
+  - Works purely with blob storage (no database check)
+- `GET /notes/{noteId}/attachments/{attachmentId}` — Retrieve a single attachment (200 + stream / 400 / 404)
+- `GET /notes/{noteId}/attachments` — Retrieve all attachment metadata for a note (200 / 400 / 404)
+- `DELETE /notes/{noteId}/attachments/{attachmentId}` — Delete an attachment (204 idempotent / 400 / 404 / 500)
 
-- **Architecture:** Each note has its own private blob container named with the note's GUID ID (lowercase)
-- **Attachment Endpoints:**
-  - `PUT /notes/{noteId}/attachments/{attachmentId}` - Upload or update an attachment
-    - Returns 201 (Created) with Location header for new attachments
-    - Returns 204 (No Content) for updates to existing attachments
-    - Returns 400 (Bad Request) for invalid GUID format
-    - Returns 403 (Forbidden) when MaxAttachments limit is reached (for new uploads only)
-    - **Note:** Does NOT check database - works purely with blob storage
-  - `GET /notes/{noteId}/attachments/{attachmentId}` - Retrieve a single attachment
-    - Returns 200 (OK) with file stream and Content-Disposition header
-    - Returns 400 (Bad Request) for invalid GUID format
-    - Returns 404 (Not Found) if attachment or container doesn't exist
-  - `GET /notes/{noteId}/attachments` - Retrieve all attachment metadata for a note
-    - Returns 200 (OK) with array of attachment info (empty array if no attachments)
-    - Returns 400 (Bad Request) for invalid GUID format
-    - Returns 404 (Not Found) if container doesn't exist
-    - **Note:** 404 behavior goes beyond spec requirement (spec only requires 200 OK) for consistency with single GET endpoint
-  - `DELETE /notes/{noteId}/attachments/{attachmentId}` - Delete an attachment
-    - Returns 204 (No Content) on successful deletion or if attachment doesn't exist (idempotent)
-    - Returns 400 (Bad Request) for invalid GUID format
-    - Returns 500 (Internal Server Error) if deletion fails
-    - **Note:** Does NOT check database - works purely with blob storage
+### 4.1.3 Zip-Attachment Workflow (carried from HW4)
+A controller (`HW6NoteKeeper.Controllers.NoteKeeperZipAttachmentController`) plus an Azure Function (`HW6AzureFunctions.AttachmentZipFunction`) implement asynchronous zip creation:
+- `POST /notes/{noteId}/attachmentzipfiles` — enqueues a zip request, returns 202 + `Location`
+- `DELETE /notes/{noteId}/attachmentzipfiles/{zipFileId}` — deletes a zip blob (idempotent)
+- `GET /notes/{noteId}/attachmentzipfiles/{zipFileId}` — downloads a zip blob
+- `GET /notes/{noteId}/attachmentzipfiles` — lists all zip blobs for a note
+- `DELETE /notes/{noteId}` — enhanced delete: removes attachment container, zip container, and all DB rows
 
-- **MaxAttachments Limit:** Configurable maximum number of attachments per note (default: 3)
-  - Configuration: `NoteLimits:MaxAttachments` in appsettings.json or `NoteLimits__MaxAttachments` in Azure environment variables
-  - Limit is enforced only for **new** uploads; updating existing attachments bypasses the limit check
-  
-- **Managed Identity Authentication:** Uses `DefaultAzureCredential` for passwordless blob storage access
-  - Local Development: Uses Azure CLI, Visual Studio, or VS Code credentials
-  - Azure Deployment: Uses App Service's managed identity
-  
-- **Automatic Seeding:** `AzureStorageInitializer` seeds blob storage at startup
-  - Creates containers for seeded notes if they don't exist
-  - Uploads default attachment files for each seeded note
-  - Idempotent: safe to run multiple times
-  - Retry logic handles Azure's "ContainerBeingDeleted" transient errors (up to 10 retries with 4-second delays)
+> **HW6 IMPORTANT:** Per the HW6 instructions, the API Management products **must not expose** the `attachmentzipfiles` resource. The zip endpoints remain in the App Service for legacy/internal use but are excluded from both the Basic and Standard API Management products.
 
-- **Seeded Attachments:**
-  - "Running grocery list" → MilkAndEggs.png, Oranges.png
-  - "Gift supplies notes" → WrappingPaper.png, Tape.png
-  - "Valentine's Day gift ideas" → Chocolate.png, Diamonds.png, NewCar.png
-  - "Azure tips" → AzureLogo.png, AzureTipsAndTricks.pdf
+### 4.1.4 Background Infrastructure (carried over)
+- **Azure SQL Database** with EF Core 9.0 (Note + Tag tables, code-first with migrations)
+- **Azure Blob Storage** — one container per note (`{noteId}`) plus a zip container per note (`{noteId}-zip`)
+- **Azure Storage Queues** — `attachment-zip-requests` (+ `-poison`) for the function trigger
+- **Application Insights** — TrackTrace / TrackException / TrackEvent telemetry
+- **DefaultAzureCredential / Managed Identity** — passwordless auth to SQL, Blob, Queue, and Functions
+- **Database/Storage seeding** at app startup: 4 default notes with attachments are reseeded on each boot
 
-- **Implementation Files:**
-- `Services/AzureStorageService.cs` - Blob operations (upload, delete, download, list, count, exists)
-- `Controllers/NoteKeeperAttachmentController.cs` - REST API endpoints (PUT, GET single, GET all, DELETE)
-- `RequestAndResultObjects/AttachmentInfoResult.cs` - Result class for GET all attachments
-- `Data/AzureStorageInitializer.cs` - Startup seeding logic
-- `CustomSettings/NoteLimits.cs` - MaxAttachments property added
+### 4.1.5 Note Limits
+- `NoteLimits:MaxNotes` (default 10) — max notes; POST returns 403 when full
+- `NoteLimits:MaxAttachments` (default 3) — max attachments per note; PUT returns 403 when full (only counts new uploads)
 
----
+### 4.1.6 Tag Generation
+The application uses Azure OpenAI's GPT-5-mini model to automatically generate any number of tags (no max set) for each note based on its details. Tags are concise (1–2 words), lowercase, and regenerated when note details change.
 
-## 4.2. Extra Credit and Graduate Credit Implementations
-
-
-
-**HOMEWORK 4 EXTRA CREDIT:**
-
-### Extra Credit 3: Managed Identities for Azure Storage Queues in Azure Function
-
-**Requirement:** Use managed identities (instead of connection strings/keys) for authentication to Azure Storage Queues in the Azure Function.
-
-**Implementation:**
-
-The `AttachmentZipFunction` (and `AttachmentZipProcessor`) authenticate to all Azure Storage resources using `DefaultAzureCredential` — no storage account keys or connection strings are stored anywhere in the code or configuration.
-
-**Queue trigger (passwordless):**
-- The queue trigger binding uses `AttachmentZipRequests__queueServiceUri` instead of a connection string, pointing to `https://st4hw3.queue.core.windows.net`
-- Azure Functions resolves this as a managed identity connection because the `__queueServiceUri` suffix (no `__AccountKey`) signals credential-based auth
- 
-**Blob storage (passwordless):**
-- `BlobStorageHelper` is constructed with `new BlobServiceClient(uri, new DefaultAzureCredential())`
-- `AzureWebJobsStorage__serviceUri` replaces the traditional `AzureWebJobsStorage` connection string
-
-**Azure infrastructure:**
-- Managed Identity: `id-dbadmin` (user-assigned) is assigned to `func-HW6`
-- Role assignments on `st4hw3`: `Storage Blob Data Contributor` and `Storage Queue Data Contributor`
-- App setting `AttachmentZipRequests__clientId` = the client ID of `id-dbadmin`
-
-**Local development note:**
-- `local.settings.json` uses the same URI-based settings; `DefaultAzureCredential` falls back to the Azure CLI credential (`az login` as `paulschwartzberg@outlook.com`) for local testing
+### 4.1.7 Technology Stack
+- ASP.NET Core 10.0 Web API
+- Azure OpenAI (GPT-5-mini deployment)
+- Entity Framework Core 9.0 with Azure SQL Database
+- Azure Blob Storage (note attachments + zip outputs)
+- Azure Storage Queues + Azure Functions Isolated Worker v4 (`net8.0`)
+- Application Insights (telemetry + Live Metrics)
+- Managed Identity / DefaultAzureCredential (passwordless authentication)
+- Swashbuckle/Swagger for API documentation
+- `System.IO.Compression.ZipArchive` for in-memory zip creation
+- `Azure.Storage.Queues` for queue interaction
 
 ---
 
-**HOMEWORK 3 EXTRA CREDIT:**
+## 4.2. HW6 Implementation Status
 
-### Extra Credit Option 1: Custom Application Insights Telemetry for Attachments
+This section tracks the **HW6-specific** work — Azure API Management front-end and the small set of code changes the swagger.json import requires. It is currently a checklist; entries will be filled in as each step is completed in coordination with the user.
 
-**Implementation:** Custom telemetry tracking for attachment operations using Azure Application Insights.
+### 4.2.1 Required Code Changes (HW6 §1)
+- [ ] Ensure unique `OperationId` for all API actions (Swashbuckle `CustomOperationIds` or attribute-based)
+- [ ] Verify all controller method names are unique across controllers (no `GetById` duplicates)
+- [ ] Add host-name handling so the swagger.json reflects the public host
+- [ ] Add CORS support (`AddCors` / `UseCors`)
 
-**Events Tracked:**
+### 4.2.2 Azure App Service for the REST API (HW6 §2)
+- [ ] New App Service on the existing Linux B2 App Service Plan, named per Azure abbreviation conventions
+- [ ] Application Insights instance with matching name (`appi-…`)
+- [ ] App Service Plan tier confirmed Basic
+- [ ] Application deployed
+- [ ] App Service set to TLS 1.2
+- [ ] Deployed REST API URL recorded here:
+- [ ] App Service name recorded here:
 
-1. **AttachmentCreated Event**
-   - Triggered when a new attachment is uploaded (HTTP PUT creates a new blob)
-   - Properties: `attachmentid` (string) - The blob ID/filename
-   - Metrics: `AttachmentSize` (double) - Size in bytes
-   - Implementation: `NoteKeeperAttachmentController.PutAttachment()`
+### 4.2.3 Azure API Management Service (HW6 §3)
+- [ ] APIM service created in Consumption tier
+- [ ] Organization name: `CSCIE-94 Paul Schwartzberg`
+- [ ] Administrator email: `paulschwartzberg@outlook.com`
+- [ ] Application Insights linked to the same AI instance from §4.2.2
+- [ ] Protocol settings configured per HW6 §3.7
+- [ ] APIM gateway URL recorded here:
+- [ ] APIM service name recorded here:
 
-2. **AttachmentUpdated Event**
-   - Triggered when an existing attachment is overwritten (HTTP PUT updates existing blob)
-   - Properties: `attachmentid` (string) - The blob ID/filename
-   - Metrics: `AttachmentSize` (double) - Size in bytes
-   - Implementation: `NoteKeeperAttachmentController.PutAttachment()`
+### 4.2.4 Connecting App Service ↔ APIM (HW6 §4)
+- [ ] API Management definition (full URL to swagger.json) added to App Service
+- [ ] App Service linked to APIM via the API Management option
+- [ ] OpenAPI Specification import enabled
+- [ ] Application Insights enabled on import
+- [ ] All REST APIs imported
+- [ ] No URL suffix, no versioning (defaults)
 
-3. **Validation Error Tracking (All Attachment Methods)**
-   - Method: `TrackTrace` with `SeverityLevel.Warning`
-   - Properties:
-     - `ValidationError` (string) - Description of the validation error
-     - `InputPayload` (string) - JSON-serialized input parameters
-   - Tracked Errors:
-     - Invalid noteId format (not a valid GUID)
-     - Null or empty attachmentId
-     - Null or empty file data
-   - Applied to: PUT, DELETE, GET (single), GET (all attachments)
+### 4.2.5 API Cloning (HW6 §5)
+- [ ] Display name of imported API set to **Note Keeper Basic**
+- [ ] API cloned and renamed to **Note Keeper Standard**
+- [ ] Standard API URL suffix set to `standard`
+- [ ] Backend Service URL of the cloned (Standard) API set to the App Service URL
 
-4. **Exception Tracking (All Attachment Methods)**
-   - Method: `TrackException`
-   - Properties:
-     - `ExceptionMessage` (string) - The exception message
-     - `InputPayload` (string) - JSON-serialized input parameters
-   - Applied to all attachment operations with try-catch blocks
+### 4.2.6 Basic Product (HW6 §6)
+- [ ] Product `Basic` (id `basic`) created
+- [ ] Description: `Provides basic note keeper functionality with no attachment support.`
+- [ ] Published = true, Requires Subscription = true, Requires Approval = false
+- [ ] No subscription count limit, no legal terms
+- [ ] Subscription added: display name `Basic Subscription`, name `BasicSubscription`
+- [ ] Attachments operation removed from Note Keeper Basic API
+- [ ] Primary Key recorded here:
 
-**Viewing Telemetry in Azure Portal:**
+### 4.2.7 Standard Product (HW6 §7)
+- [ ] Product `Standard` (id `standard`) created
+- [ ] Description: `Provides standard note keeper functionality with attachment support.`
+- [ ] Published = true, Requires Subscription = true, Requires Approval = false
+- [ ] No subscription count limit, no legal terms
+- [ ] Subscription added: display name `Standard Subscription`, name `StandardSubscription`
+- [ ] Primary Key recorded here:
 
-*Custom Events:*
-```kusto
-customEvents
-| where name == "AttachmentCreated" or name == "AttachmentUpdated"
-| project timestamp, name, customDimensions.attachmentid, customMeasurements.AttachmentSize
-```
+### 4.2.8 Location Header Override (HW6 §8)
+- [ ] `set-header` policy applied to all operations that return a `location` header, rewriting the host portion to the APIM gateway host:
+  ```xml
+  <set-header name="location" exists-action="override">
+      <value>@(context.Response.Headers.GetValueOrDefault("location", "").Replace(context.Request.Url.Host, context.Request.OriginalUrl.Host))</value>
+  </set-header>
+  ```
 
-*Validation Errors:*
-```kusto
-traces
-| where message contains "Validation Error"
-| project timestamp, message, customDimensions.ValidationError, customDimensions.InputPayload
-```
+### 4.2.9 Custom Response Headers (HW6 §9)
+- [ ] `X-CourseName: CSCI-E94` added to all operations on both Basic and Standard
+- [ ] `X-SubscriptionName` added to all operations on both Basic and Standard, dynamically populated from the subscription's name via APIM policy expression
 
-*Exceptions:*
-```kusto
-exceptions
-| where customDimensions has "InputPayload"
-| project timestamp, type, outerMessage, customDimensions.ExceptionMessage, customDimensions.InputPayload
-```
-
-**HOMEWORK 3 GRADUATE CREDIT:**
-
-*No additional graduate credit implemented for HW6.*
-
-**CARRIED OVER FROM HOMEWORK 2:**
-
-*These components were implemented for HW2 extra/graduate credit and remain in the solution:*
-
-1. **Managed Identity / Passwordless Database Access (Section 11)** - *Originally implemented for HW2 extra credit*
-   - Microsoft Entra ID authentication for Azure SQL Database
-   - Uses `Authentication=Active Directory Default` in connection string
-   - No credentials stored in configuration files
-   - Configuration file: `appsettings.managedidentities.json`
-
-2. **Application Insights Telemetry (Section 10)** - *Originally implemented for HW2 graduate credit*
-   - Full telemetry implementation with TrackTrace, TrackException, and TrackEvent
-   - Validation errors logged with `TrackTrace` (SeverityLevel.Warning)
-   - All exceptions logged with `TrackException` including InputPayload
-   - Custom events tracked for successful operations
-   - Live Metrics enabled with SDK Control Channel authentication
-   - Instance: `appi-notekeeper-cscie94-ps-HW6`
-
-3. **Entity Framework Core with Azure SQL Database** - *Originally implemented for HW2*
-   - Code-first approach with migrations
-   - Azure SQL Database: `sqldb-cscie94-2026_HW6`
-   - Note and Tag models with one-to-many relationship
-   - Database seeding with default notes
-
-4. **MaxNotes Limit Feature** - *Originally implemented for HW2*
-   - Configurable maximum number of notes (default: 10)
-   - Returns 403 Forbidden when limit reached
-   - Configuration: `NoteLimits:MaxNotes` in appsettings.json
-
-**CARRIED OVER FROM HOMEWORK 1:**
-
-*These components were implemented for HW1 extra/graduate credit and remain in the solution:*
-
-1. **Blazor UI (HW6NoteKeeper.BlazorUI project)** - *Originally implemented for HW1 graduate credit*
-   - Left unchanged from HW1
-   - Not modified for HW2 or HW6 as it was not required
-   - Runs locally only; API is on Azure (Section 7)
-
-2. **Unit/E2E Testing (HW6NoteKeeper.Tests project)** - *Originally implemented for HW1 extra credit*
-- Modified extensively for HW2 and HW6 to test new features
-- Used for personal verification that requirements work correctly
-- 27 E2E tests for attachment endpoints (NoteKeeperAttachmentE2ETests): PUT, GET single, GET all, DELETE, seeding
-- 22 E2E tests for note endpoints (NoteKeeperControllerE2ETests)
-- All tests run against production Azure SQL Database and Azure Blob Storage
+### 4.2.10 HW6 Extra Credit Selected
+*To be decided in coordination with the user. Options listed in HW6 instructions are:*
+- *EC1 — Add cache support (Redis Basic 250 MB) for list-of-notes and list-of-attachments operations, 20 s TTL*
+- *EC2 — Apply `json-to-xml` transformation policy to notes responses when `Accept: application/xml`*
+- *EC3 — Add a `Free` product tier with rate-limit policy (5 calls/min) and `X-Free-NotesCalls-Remaining` / `-Limit` / `Retry-After` headers*
 
 ---
 
@@ -253,17 +198,17 @@ exceptions
 
 **No custom Azure resource abbreviations were used in this project.**
 
-All resources follow standard Azure naming conventions.
+All resources follow standard Azure naming conventions per the Cloud Adoption Framework.
 
 ---
 
 ## 7. Azure App Service Website URL
 
-**Production URL:**   
-https://app-notekeeper-cscie94-ps-hw6-hrb0hhgne9b7anen.swedencentral-01.azurewebsites.net
+**HW6 REST API (App Service):** *(to be recorded once the new HW6 App Service is created — see §4.2.2)*
 
-**Note:** The Swagger UI is configured to load at the root path (`/`), so navigating to the base URL will display the interactive
-API documentation.
+**HW6 API Management Gateway:** *(to be recorded once the APIM service is created — see §4.2.3)*
+
+> The Swagger UI is configured to load at the root path (`/`) of the App Service, so navigating to the base URL displays the interactive API documentation.
 
 ---
 
@@ -275,48 +220,40 @@ API documentation.
 **Deployment Model Name:** `gpt-5-mini`
 
 **Configuration Note:**  
-The application expects the following environment variables to be set in Azure App Service:
+The application expects the following environment variables to be set in Azure App Service (and equivalents in user secrets for local dev):
+
 - `AzureOpenAI__DeploymentUri` = `https://ai-csscie94-foundry.openai.azure.com/`
-- `AzureOpenAI__ApiKey` = `[API Key - not included per requirement #9]`
+- `AzureOpenAI__ApiKey` = *(API key — not included per requirement #9)*
 - `AzureOpenAI__DeploymentModelName` = `gpt-5-mini`
 - `AzureOpenAI__Temperature` = `1.0`
 - `AzureOpenAI__TopP` = `1.0`
 - `AzureOpenAI__MaxOutputTokens` = `500`
-- `NoteLimits__MaxNotes` = `10` (or your desired limit)
-- `ApplicationInsights__AuthenticationApiKey` = `fkobfb4qcixknvrhfiu47glh4uhzrajrg7hwwywg` (SDK Control Channel authentication key for Live Metrics)
-- `NoteLimits__MaxAttachments` = `3` (or your desired limit)
+- `NoteLimits__MaxNotes` = `10`
+- `NoteLimits__MaxAttachments` = `3`
+- `ApplicationInsights__AuthenticationApiKey` = *(SDK control-channel key for Live Metrics)*
 - `StorageAccountSettings__Url` = `https://<your-storage-account>.blob.core.windows.net/`
-- `StorageAccountSettings__TenantId` = `<your-tenant-id>` (for local development only)
+- `StorageAccountSettings__TenantId` = `<your-tenant-id>` *(local dev only)*
 - `StorageAccountSettings__AccountName` = `<your-storage-account-name>`
 
-### How to Configure NoteLimits in Azure App Service
+### How to Configure Settings in Azure App Service
 
-1. **Via Azure Portal:**
-   - Navigate to your App Service: `app-notekeeper-cscie94-ps-HW6-1-gjegduaqfccbd2bt`
-   - Go to **Settings** → **Environment variables**
-   - Click **+ Add** to add new application settings:
-     - `NoteLimits__MaxNotes` = `10` (or your desired maximum number of notes)
-     - `NoteLimits__MaxAttachments` = `3` (or your desired maximum attachments per note)
-   - Click **Apply** and then **Confirm**
-   - Restart the App Service for changes to take effect
-
+1. **Via Azure Portal:** App Service → **Settings** → **Environment variables** → **App settings** → **+ Add**, then **Apply** + **Confirm**, then restart.
 2. **Via Azure CLI:**
    ```bash
-   az webapp config appsettings set --name app-notekeeper-cscie94-ps-HW6 --resource-group rg_service_app_plan --settings NoteLimits__MaxNotes=10 NoteLimits__MaxAttachments=3
+   az webapp config appsettings set --name <app-name> --resource-group <rg> --settings KEY=VALUE
    ```
-
 3. **Via Azure PowerShell:**
    ```powershell
-   Set-AzWebApp -ResourceGroupName rg_service_app_plan -Name app-notekeeper-cscie94-ps-HW6 -AppSettings @{"NoteLimits__MaxNotes"="10"; "NoteLimits__MaxAttachments"="3"}
+   Set-AzWebApp -ResourceGroupName <rg> -Name <app-name> -AppSettings @{ "KEY"="VALUE" }
    ```
 
-**Note:** The double underscore (`__`) is used to represent nested configuration sections in Azure App Service environment variables. This maps to the `NoteLimits:MaxNotes` and `NoteLimits:MaxAttachments` structure in `appsettings.json`.
+> **Note:** The double underscore (`__`) is used to represent nested configuration sections in Azure App Service environment variables. `KEY__SUB` maps to `KEY:SUB` in `appsettings.json`. Colons (`:`) are not valid in Linux App Service env-var names.
 
 ---
 
 ## 9. Security Note
 
-**No credentials for Azure Resources are included in this repository or documentation**, as specified by the requirements.
+**No credentials for Azure resources are included in this repository or documentation**, as specified by the requirements.
 
 All sensitive configuration values are stored in:
 - **Local Development:** User Secrets (`secrets.json`)
@@ -326,585 +263,71 @@ All sensitive configuration values are stored in:
 
 ## 10. Application Insights Instance
 
-**Application Insights Instance Name:** `appi-notekeeper-cscie94-ps-HW6`
+**HW6 Application Insights instance name:** *(to be recorded once created — see §4.2.2)*
 
-**Application Insights Connection String:**  
-`InstrumentationKey=be46413f-c1d7-4824-adbc-f0fc681b5294;IngestionEndpoint=https://swedencentral-0.in.applicationinsights.azure.com/;LiveEndpoint=https://swedencentral.livediagnostics.monitor.azure.com/;ApplicationId=534fbe6b-3409-47e7-9c7c-ad4982cf9ac8`
+**Telemetry features carried over from prior assignments:**
+- Validation errors logged via `TrackTrace` (`SeverityLevel.Warning`) with `InputPayload`
+- Exceptions logged via `TrackException` with `InputPayload`
+- `TrackEvent` calls on note CRUD operations for usage metrics
+- Live Metrics with SDK Control Channel authentication (`ApplicationInsights__AuthenticationApiKey`)
 
-**SDK Control Channel Authentication Key:**  
-`fkobfb4qcixknvrhfiu47glh4uhzrajrg7hwwywg`
-
-**Telemetry Implementation:**
-- All validation errors are logged using `TrackTrace` with `SeverityLevel.Warning` and include validation details and the input payload
-- All exceptions are logged using `TrackException` and include exception details and the input payload that caused the exception
-- The input payload property name is `InputPayload` in both TrackTrace and TrackException calls
-- For GET/PATCH/DELETE methods, the `InputPayload` is the noteId string value
-- For POST method, the `InputPayload` is the serialized JSON of the CreateNoteRequest object
-- For PATCH method, the `InputPayload` includes both the noteId and the UpdateNoteRequest object
-
-**Note About 404 NotFound Responses:**
-- 404 NotFound scenarios (when a note is not found) are considered valid business scenarios and are not logged as validation errors or exceptions
-- Only actual validation failures (null/whitespace inputs, invalid GUID formats, ModelState validation failures) are logged with TrackTrace
-
-**Note About GET Collection Endpoint:**
-- The `GET /NoteKeeper` endpoint (with optional tagName filter) does not perform input validation and therefore does not log TrackTrace validation errors
-- This endpoint only logs successful retrievals via TrackEvent
-
-**Additional TrackEvent Implementation (Beyond Assignment Requirements):**
-- `TrackEvent` calls have been added to several controller methods for additional tracing and monitoring purposes
-- These TrackEvent calls were **not required** by the 3 assignment
-- The Homework 3 assignment **did not deprecate or forbid** such additions
-- TrackEvent calls are implemented in:
-  - `GET /NoteKeeper` - Tracks "All Notes retrieved" with count and cost metrics
-  - `POST /NoteKeeper` - Tracks "NoteCreated" with tag count, summary, and length metrics
-  - `PATCH /NoteKeeper/{noteId}` - Tracks "NoteUpdated" with summary, details, and tag count metrics
-  - `GET /NoteKeeper/{noteId}` - Tracks "A note is retrieved" with summary and cost metrics
-- These additional telemetry events provide valuable insights into API usage patterns and performance metrics
+> 404 NotFound on a missing note is treated as a valid business outcome — it is **not** logged as a validation error or exception.
 
 ---
 
 ## 11. Managed Identity Implementation
 
-**This application implements Microsoft Entra ID (Azure AD) authentication using Managed Identity for passwordless database access.**
+**This application uses Microsoft Entra ID (Azure AD) authentication via Managed Identity for passwordless database access.**
 
-**Connection String Configuration:**
+**Connection string format:**
 ```
-Server=tcp:sql-cscie94-2026-ps.database.windows.net,1433;Initial Catalog=sqldb-cscie94-2026_HW6;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;Authentication=Active Directory Default;
+Server=tcp:<sql-server>.database.windows.net,1433;Initial Catalog=<sql-db>;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;Authentication=Active Directory Default;
 ```
 
-**Key Features:**
-- **No credentials in connection string** - Uses `Authentication=Active Directory Default` for token-based authentication
-- **Local Development** - Authenticates using Azure CLI or Visual Studio credentials via `DefaultAzureCredential`
-- **Azure Deployment** - Uses the App Service's system-assigned or user-assigned managed identity
-- **Enhanced Security** - Eliminates the need to store database passwords in configuration or secrets
+- **No credentials** in the connection string — `Authentication=Active Directory Default`
+- **Local Development** — authenticates via Azure CLI / Visual Studio credentials through `DefaultAzureCredential`
+- **Azure Deployment** — uses the App Service's system-assigned or user-assigned managed identity
+- The identity must hold the appropriate roles on the SQL DB (`db_datareader`, `db_datawriter`, `db_ddladmin`, or `db_owner` for the function app's identity)
 
-**Implementation Details:**
-- Connection string is defined in `appsettings.json` and `appsettings.managedidentities.json`
-- The Azure SQL Database has been configured to accept Azure AD authentication
-- The identity (`paulschwartzberg@outlook.com` for local development) has been granted appropriate database roles:
-  - `db_datareader` - Read access to database tables
-  - `db_datawriter` - Write access to database tables
-  - `db_ddladmin` - DDL operations for `EnsureCreatedAsync()`
+**Important — local dev:** The IP of your dev box must be added to the Azure SQL Server firewall (Networking → Firewall rules). Changes propagate within ~5 minutes.
 
-**Environment-Specific Configuration:**
-- `ASPNETCORE_ENVIRONMENT=managedidentities` triggers the use of `appsettings.managedidentities.json`
-- This enables testing managed identity authentication locally before Azure deployment
-
-**Important:** For local development, ensure your Azure CLI or Visual Studio credentials have access to the Azure SQL Database. Your IP address must be added to the SQL Server firewall rules:
-- Navigate to Azure Portal → SQL Server: `sql-cscie94-2026-ps`
-- Go to **Networking** → **Firewall rules**
-- Add your client IPv4 address
-- Changes take up to 5 minutes to propagate
+**HW6 SQL information** *(to be recorded once a HW6-specific database, if any, is established):*
+- Azure SQL Server name:
+- Azure SQL Database name:
+- Full URL:
+- SQL Authentication username/password (if used in addition to managed identity):
 
 ---
 
 ## 12. Azure Blob Storage Configuration
 
-**Storage Account:** As configured in user secrets / environment variables
+**Storage Account:** As configured in user secrets / environment variables (`StorageAccountSettings__Url`, `StorageAccountSettings__AccountName`).
 
-**Managed Identity Authentication:**
-The application uses `DefaultAzureCredential` for passwordless blob storage access:
-- **Local Development:** Uses developer credentials (Azure CLI, Visual Studio, VS Code)
-  - `ExcludeEnvironmentCredential = true`
-  - `ExcludeManagedIdentityCredential = true`
-  - `ExcludeWorkloadIdentityCredential = true`
-  - `ExcludeInteractiveBrowserCredential = true`
-  - Tenant ID scoped for SharedTokenCache, VisualStudioCode, and VisualStudio credentials
-  
-- **Azure Deployment:** Uses managed identity credentials only
-  - `ExcludeVisualStudioCredential = true`
-  - `ExcludeVisualStudioCodeCredential = true`
-  - `ExcludeAzureCliCredential = true`
-  - `ExcludeAzurePowerShellCredential = true`
-  - `ExcludeAzureDeveloperCliCredential = true`
-  - `ExcludeWorkloadIdentityCredential = true`
-  - `ExcludeInteractiveBrowserCredential = true`
+**Authentication:** `DefaultAzureCredential` everywhere — no account keys or connection strings in code or config.
 
 **Container Naming:**
-- Each note has its own blob container
-- Container name = note's GUID ID (lowercase)
+- Each note has a private blob container named after its lowercase GUID (`{noteId}`)
+- Each note has a paired zip container `{noteId}-zip`
 - Access level: Private (no anonymous access)
 
-**Blob Metadata:**
-- Each blob has a `noteid` metadata property set to the note's ID
-- Case-insensitive metadata key per Azure specification
+**Blob Metadata:** Every attachment blob carries a `noteid` metadata key set to the note's ID (case-insensitive per Azure spec).
 
-**Retry Logic:**
-- Container creation includes retry logic for Azure's "ContainerBeingDeleted" transient error
-- Up to 10 attempts with 4-second delays between retries
-- Required because Azure takes up to 30 seconds to fully delete a container before allowing recreation
+**Retry Logic:** Container creation retries Azure's "ContainerBeingDeleted" transient error up to 10 times with 4 s delays.
 
-**Configuration Settings:**
-- `StorageAccountSettings:Url` - Blob service endpoint (e.g., `https://<account>.blob.core.windows.net/`)
-- `StorageAccountSettings:TenantId` - Azure AD tenant ID (local development only)
-- `StorageAccountSettings:AccountName` - Storage account name
+**Protected Containers (never deleted during seeding):**
+- `app-package-func-<funcapp-name>` — Azure Function deployment package
+- `azure-webjobs-hosts` — Functions runtime metadata
+- `azure-webjobs-secrets` — Functions secrets
+- All `$`-prefixed containers (Azure system containers)
 
 ---
 
-## 13. Bicep Extra Credit — Infrastructure as Code Deployment
+## 13. Azure Function App
 
-### Overview
+**HW6 Azure Function name:** *(carried from HW4 — see HW4 deployment; will be re-recorded here once verified for HW6.)*
 
-The `BicepFiles4XC` folder (added to the solution under **BicepFiles4XC/** solution folder) contains a complete Bicep IaC deployment that:
+The function `AttachmentZipFunction` triggers on the `attachment-zip-requests` queue and writes zip files to the `{noteId}-zip` container. See §4.1.3 for the public-facing endpoints that surface this work.
 
-| Step | Action | Resource | Target Resource Group |
-|------|--------|----------|----------------------|
-| (a) | Creates resource group | `rg_03-assignment` | *(subscription level)* |
-| (b) | Deploys Azure Blob Storage | `stHW6bicepextracredit` | `rg_03-assignment` |
-| (c) | Updates App Service Plan to B2 | `asp-cscie94` | `rg_service_app_plan` |
-| (d) | Deploys new App Service | `app-HW6-bicep-extra-credit` | `rg_03-assignment` |
-
-### File Structure
-
-```
-Bicep/BicepFiles4XC/
-├── main.bicep                   ← Single entry point (subscription scope)
-├── createStorageAccount.bicep   ← Module: deploys Storage Account
-├── updateAppServicePlan.bicep   ← Module: updates asp-cscie94 B1 → B2
-└── createAppService.bicep       ← Module: deploys new App Service
-```
-
-### How to Deploy
-
-**Prerequisites:**
-- Azure CLI installed and logged in (`az login`)
-- Bicep CLI (included with Azure CLI 2.20+)
-- Contributor or Owner role on the subscription
-
-#### Azure CLI
-
-```bash
-cd C:\Users\schwa\Documents\H_DCE\cloud_computing_openai_e_94\assignments\03-Assignment\HW6NoteKeeper\Bicep\BicepFiles4XC
-
-az deployment sub create `
-  --name "BicepXC_$(Get-Date -Format 'yyyyMMddHHmmss')" `
-  --location eastus `
-  --template-file main.bicep
-```
- 
-#### PowerShell
-
-```powershell
-cd C:\Users\schwa\Documents\H_DCE\cloud_computing_openai_e_94\assignments\03-Assignment\HW6NoteKeeper\Bicep\BicepFiles4XC
-
-New-AzSubscriptionDeployment `
-  -Name ("BicepXC_" + (Get-Date -Format "yyyyMMddHHmmss")) `
-  -Location 'eastus' `
-  -TemplateFile 'main.bicep'
-```
-
-or 
-
-```powershell
-
- az deployment sub create `
-     --name ("BicepXC_" + (Get-Date -Format "yyyyMMddHHmmss")) `
-     --location eastus `
-     --template-file "C:\Users\schwa\Documents\H_DCE\cloud_computing_openai_e_94\assignments\03-Assignment\HW6NoteKeeper\Bicep\BicepFiles4XC\main.bicep"
- ```
-### How to delete the deployed resources
-
-```powershell
-
-az group delete -n rg_03-assignment --yes --no-wait
-
- ```
-
-#### Notes
-- The App Service Plan update is **idempotent**: if `asp-cscie94` is already B2, no change is made.
-- The new App Service `app-HW6-bicep-extra-credit` is linked to `asp-cscie94` (cross-resource-group reference via full resource ID).
-- To deploy async, append `--no-wait` to the Azure CLI command.
+> **HW6 reminder:** API Management does **not** expose the `attachmentzipfiles` operations to clients. They remain on the App Service for internal/legacy use only.
 
 ---
-
-## Additional Technical Notes
-
-### API Endpoints
-
-**Note Management:**
-- `GET /NoteKeeper` - Retrieve all notes (optional `tagName` query parameter for filtering)
-- `GET /NoteKeeper/{noteId}` - Retrieve a specific note by ID
-- `POST /NoteKeeper` - Create a new note with AI-generated tags
-  - Returns 201 (Created) on success
-  - Returns 400 (Bad Request) if validation fails
-  - Returns 403 (Forbidden) if the MaxNotes limit has been reached
-  - Returns 500 (Internal Server Error) on unexpected errors
-- `PATCH /NoteKeeper/{noteId}` - Update an existing note (regenerates tags if details change)
-- `DELETE /NoteKeeper/{noteId}` - Delete a note
-
-**Attachment Management (HW6):**
-- `PUT /notes/{noteId}/attachments/{attachmentId}` - Upload or update an attachment
-  - Returns 201 (Created) with Location header for new attachments
-  - Returns 204 (No Content) for updates to existing attachments
-  - Returns 400 (Bad Request) for invalid GUID format
-  - Returns 403 (Forbidden) when MaxAttachments limit is reached (new uploads only)
-  - Works purely with blob storage (no database check)
-- `GET /notes/{noteId}/attachments/{attachmentId}` - Retrieve a single attachment
-  - Returns 200 (OK) with file stream and Content-Disposition header
-  - Returns 400 (Bad Request) for invalid GUID format
-  - Returns 404 (Not Found) if attachment or container doesn't exist
-- `GET /notes/{noteId}/attachments` - Retrieve all attachment metadata for a note
-  - Returns 200 (OK) with array of attachment info (empty array if no attachments)
-  - Returns 400 (Bad Request) for invalid GUID format
-  - Returns 404 (Not Found) if container doesn't exist (goes beyond spec for consistency)
-- `DELETE /notes/{noteId}/attachments/{attachmentId}` - Delete an attachment
-  - Returns 204 (No Content) on successful deletion or if attachment doesn't exist (idempotent)
-  - Returns 400 (Bad Request) for invalid GUID format
-  - Returns 404 (Not Found) if the container (note) doesn't exist
-  - Returns 500 (Internal Server Error) if deletion fails
-  - Works purely with blob storage (no database check)
-
-### Note Limits
-The application supports configurable limits for notes and attachments:
-
-**MaxNotes:**
-- **Default Value:** 10 notes
-- **Configuration:** Set via `NoteLimits:MaxNotes` in `appsettings.json` or `NoteLimits__MaxNotes` in Azure App Service environment variables
-- **Behavior:** When the limit is reached, POST requests to create new notes will return 403 (Forbidden) with details about the current limit
-
-**MaxAttachments (HW6):**
-- **Default Value:** 3 attachments per note
-- **Configuration:** Set via `NoteLimits:MaxAttachments` in `appsettings.json` or `NoteLimits__MaxAttachments` in Azure App Service environment variables
-- **Behavior:** When the limit is reached, PUT requests to upload new attachments will return 403 (Forbidden)
-- **Note:** Updating an existing attachment bypasses the limit check (only new uploads are counted against the limit)
-
-### Tag Generation
-The application uses Azure OpenAI's GPT-5-mini model to automatically generate any number of tags (no max set)
-for each note based on its details. Tags are:
-- Concise (single-word or two-word)
-- Lowercase
-- Relevant to the note content
-- Automatically generated when a note is created or when details are updated
-
-### Technology Stack
-- ASP.NET Core 10.0 Web API
-- Azure OpenAI (GPT-5-mini deployment)
-- Entity Framework Core 9.0 with Azure SQL Database
-- Azure Blob Storage (for note attachments)
-- Application Insights (telemetry and monitoring)
-- Managed Identity / DefaultAzureCredential (passwordless authentication)
-- Swashbuckle/Swagger for API documentation
-
----
-
-## 4.2. Homework 4 New Features
-
-### 4.2.1 NoteKeeperZipAttachmentController
-
-A new controller (`HW6NoteKeeper.Controllers.NoteKeeperZipAttachmentController`) was added at route `notes/{noteId}` with five operations:
-
-#### POST `/notes/{noteId}/attachmentzipfiles` — Request Zip Creation (§1.1)
-- Validates `noteId` is a valid GUID → 400 Bad Request if not
-- Verifies note exists in Azure SQL → 404 Not Found if not
-- Checks the attachment blob container has ≥ 1 blob → 204 No Content if 0 blobs
-- Generates a unique `zipFileId` (`{Guid}.zip`) and enqueues a JSON message to the `attachment-zip-requests` queue
-- Returns 202 Accepted with a `Location` header pointing to the future zip download URL
-
-#### DELETE `/notes/{noteId}/attachmentzipfiles/{zipFileId}` — Delete Zip File (§1.2)
-- Validates `noteId` (GUID) → 400; verifies note exists → 404
-- Deletes the zip blob from the `{noteId}-zip` container (idempotent)
-- Returns 204 No Content whether or not the blob existed
-
-#### GET `/notes/{noteId}/attachmentzipfiles/{zipFileId}` — Retrieve Zip by ID (§1.3)
-- Validates `noteId` (GUID) → 400; verifies note exists → 404
-- Returns the zip blob as `application/zip` stream → 200 OK
-- Returns 404 Not Found if the zip blob does not exist
-
-#### GET `/notes/{noteId}/attachmentzipfiles` — Retrieve All Zip Files (§1.4)
-- Validates `noteId` (GUID) → 400; verifies note exists → 404
-- Returns an array of `ZipBlobInfo` DTOs → 200 OK (empty array if container doesn't exist yet)
-
-#### DELETE `/notes/{noteId}` — Enhanced Note Delete (§1.5)
-- Validates `noteId` (GUID) → 400; verifies note exists → 404
-- Deletes the attachment blob container (`{noteId}`) — idempotent
-- Deletes the zip blob container (`{noteId}-zip`) — idempotent
-- Removes the Note (and cascade-deletes Tags) from Azure SQL
-- Returns 204 No Content
-
-### 4.2.2 AzureStorageService Extensions
-
-`HW6NoteKeeper.Services.AzureStorageService` was extended with:
-- `QueueServiceClient` dependency (injected as singleton; URI-based managed identity)
-- `EnqueueZipRequestAsync(noteId, zipFileId)` — sends JSON message to `attachment-zip-requests` queue
-- `ListZipBlobsAsync(noteId)` — lists blobs in `{noteId}-zip` container; returns `null` if container doesn't exist
-- `DownloadZipBlobAsync(noteId, zipFileId)` — downloads a zip blob; returns `null` if not found
-- `DeleteZipBlobAsync(noteId, zipFileId)` — deletes a single zip blob (idempotent)
-- `DeleteContainerIfExistsAsync(containerName)` — deletes any named container and all its blobs
-- `ZipContainerExistsAsync(noteId)` — checks existence of the `{noteId}-zip` container
-
-### 4.2.3 New Models and DTOs
-
-| File | Purpose |
-|------|---------|
-| `HW6NoteKeeper/Models/ZipRequest.cs` | Queue message payload (`NoteId`, `ZipFileId`) |
-| `HW6NoteKeeper/RequestAndResultObjects/ZipBlobInfo.cs` | DTO returned by the GET all zip files endpoint |
-
-### 4.2.4 HW6AzureFunctions Project (§3)
-
-A new Azure Functions project (`HW6AzureFunctions`, `net8.0`, isolated worker model v4) was added to the solution.
-
-- **Function name:** `AttachmentZipFunction`
-- **Trigger:** `QueueTrigger` on `attachment-zip-requests` queue in `st4hw3` storage account
-- **Connection name:** `AttachmentZipRequests` (configured as `AttachmentZipRequests__queueServiceUri` via managed identity)
-- **Logic:**
-  1. Deserialises the `ZipRequest` JSON payload
-  2. Lists all blobs in the `{noteId}` attachment container
-  3. If container is missing or empty — logs a warning and exits (no zip created)
-  4. Builds an in-memory `ZipArchive` containing all attachment blobs (using `System.IO.Compression`)
-  5. Uploads the zip to the `{noteId}-zip` container as blob named `{zipFileId}`, content-type `application/zip`
-- **Error handling:** Any exception causes retry; after `maxDequeueCount` (5) retries the message moves to `attachment-zip-requests-poison`
-- **Managed identity (EC3):** Uses `DefaultAzureCredential` for all blob and queue operations; `AzureWebJobsStorage__serviceUri` and `AttachmentZipRequests__queueServiceUri` point to `st4hw3`
-- **Azure deployment:** Function App `func-HW6`; managed identity `id-dbadmin` (Owner role)
-
-#### local.settings.json (HW6AzureFunctions)
-```json
-{
-  "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
-  "AzureWebJobsStorage__serviceUri":    "https://st4hw3.blob.core.windows.net",
-  "AttachmentZipRequests__queueServiceUri": "https://st4hw3.queue.core.windows.net",
-  "StorageBlobServiceUri":  "https://st4hw3.blob.core.windows.net",
-  "StorageQueueServiceUri": "https://st4hw3.queue.core.windows.net"
-}
-```
-
-### 4.2.5 Testing
-
-Two new E2E test classes were added to `HW6NoteKeeper.Tests`:
-
-| Test Class | What it tests |
-|-----------|--------------|
-| `NoteKeeperZipAttachmentE2ETests` | All 5 controller endpoints + full cycle (POST→GET list→GET download→DELETE zip) |
-| `AttachmentZipFunctionE2ETests` | Azure Function end-to-end: enqueues real messages, verifies zip blobs in Azure Blob Storage |
-
-Both test classes are marked `[Collection("Sequential")]` and `[Trait("Category", "E2E")]` and require the app and function app to be deployed.  They must **not** be run automatically.
-
-The `HW6NoteKeeper.Tests.csproj` was updated to include `Azure.Storage.Queues` for queue interaction in function E2E tests.
-
-### 4.2.6 Azure Infrastructure Summary
-
-| Resource | Name | Purpose |
-|----------|------|---------|
-| Azure SQL Database | `sqldb-cscie94-2026_HW6` | Notes + Tags storage |
-| Azure Storage Account | `st4hw3` | Blob containers for attachments, zip containers, queues |
-| Azure Storage Queue | `attachment-zip-requests` | Triggers the Azure Function for zip creation |
-| Azure Storage Queue | `attachment-zip-requests-poison` | Dead-letter queue for failed function executions |
-| Azure App Service | `app-notekeeper-cscie94-ps-HW6` | Hosts the `HW6NoteKeeper` Web API |
-| Azure Function App | `func-HW6` | Hosts the `AttachmentZipFunction` |
-| Managed Identity | `id-dbadmin` | Used by both App Service and Function App for passwordless auth |
-
-### 4.2.7 Technology Stack (HW6 additions)
-- `System.IO.Compression.ZipArchive` — in-memory zip archive creation
-- `Azure.Storage.Queues` — queue client for enqueuing/dequeuing zip requests
-- Azure Functions Isolated Worker v4 (`net8.0`) — serverless zip processing
-- `DefaultAzureCredential` — managed identity for all Azure resource access (EC3)
-
----
-
-## 4.2.8 Azure Storage Container for Function App Deployment
-
-During deployment of the `HW6AzureFunctions` Azure Function to `func-HW6`, a new Azure Blob Storage container was required for storing the function app deployment package.
-
-- **Container name:** `app-package-func-HW6`
-- **Storage account:** `st4hw3`
-- **Purpose:** Holds the Azure Function App deployment zip package (used by Azure when publishing via Visual Studio / Azure CLI)
-- **Created by:** Paul Schwartzberg during HW6 Azure Function deployment
-
-- **IMPORTANT:** This container is protected and must **never** be deleted during storage seeding. Listed in `StorageOperationalSettings.ProtectedContainers` in `appsettings.json`.
-
----
-
-## 4.2.9 Database: sqldb-cscie94-2026_HW6
-
-Per the HW6 requirements (page 1), a **new, dedicated Azure SQL database** was created for HW6. The old `sqldb-cscie94-2026` database from HW3 is **no longer used**.
-
-| Setting | Value |
-|---------|-------|
-| Database name | `sqldb-cscie94-2026_HW6` |
-| Connection string location | `appsettings.json` → `ConnectionStrings:DefaultConnection` |
-| Azure App Service override | App Setting `ConnectionStrings__DefaultConnection` |
-| Azure Function App override | App Setting `ConnectionStrings__DefaultConnection` |
-
-The managed identity `id-dbadmin` must have `db_owner` on this database:
-```sql
-CREATE USER [id-dbadmin] FROM EXTERNAL PROVIDER;
-ALTER ROLE db_owner ADD MEMBER [id-dbadmin];
-```
-
----
-
-## 4.2.10 Seeding Enhancements: Queue Clearing
-
-When `HW6NoteKeeper` starts (or is deployed), `DbInitializer.InitializeAsync()` now also clears both Azure Storage queues so stale messages do not trigger the Azure Function after a fresh deploy.
-
-**Seeding order:**
-1. Run EF Core migrations
-2. Delete all rows from `Note` and `Tag` tables
-3. Delete all blob containers (except protected ones in `ProtectedContainers`)
-4. **Clear all messages from `attachment-zip-requests` queue**
-5. **Clear all messages from `attachment-zip-requests-poison` queue**
-6. Seed the 4 default notes with attachments
-
-**Implementation:**
-- `ZipPoisonQueueName` added to `StorageOperationalSettings` and `appsettings.json`
-- `ClearQueuesAsync()` added to `IAzureStorageInitializer` and implemented in `AzureStorageInitializer`
-- `AzureStorageInitializer` now receives `QueueServiceClient` via constructor injection
-- Handles missing queues gracefully (log warning, non-fatal)
-
----
-
-## 4.2.11 Enhanced Note Delete (§1.5) — Container Cleanup Detail
-
-The enhanced note delete endpoint `DELETE notes/{noteId}` (`NoteKeeperZipAttachmentController.DeleteNoteWithAllAssets`) deletes **all** data associated with a note:
-
-| Step | What is deleted |
-|------|----------------|
-| 1 | Attachment blob container `{noteId}` and all its blobs |
-| 2 | Zip blob container `{noteId}-zip` and all its zip blobs |
-| 3 | Note record from `Note` table (SQL database) |
-| 4 | All `Tag` records for the note (cascade-deleted by EF Core) |
-
-Both container deletes use `DeleteContainerIfExistsAsync()` — idempotent, no error if container absent.
-
-**Route:** `DELETE /notes/{noteId}` — distinct from `DELETE /NoteKeeper/{noteId}` in `NoteKeeperController` which only removes the DB row (no storage cleanup).
-
----
-
-## 4.2.12 E2E Test Cleanup (AttachmentZipFunctionE2ETests)
-
-`DisposeAsync()` performs belt-and-suspenders cleanup after every test (pass or fail):
-
-1. Calls `DELETE notes/{noteId}` (enhanced delete) for every note created — removes DB row, tags, attachment container, and zip container via the API.
-2. Additionally calls `BlobServiceClient.DeleteIfExistsAsync()` directly on every container in `_containerNamesToDelete` — covers the case where the API call fails silently.
-
-Containers tracked per test:
-- Attachment container `{noteId}` — added inside `CreateTestNoteAsync()`
-- Zip container `{noteId}-zip` — added inside each test that expects a zip
-
----
-
-## 4.2.13 Session Fixes — Azure Function and Seeding Corrections
-
-### Protected Containers During Seeding
-
-`DeleteAllContainersAsync()` in `AzureStorageInitializer.cs` now skips:
-- **3 named containers** configured in `StorageOperationalSettings.ProtectedContainers`:
-  - `app-package-func-HW6` — Azure Function deployment package
-  - `azure-webjobs-hosts` — Azure Functions runtime host metadata
-  - `azure-webjobs-secrets` — Azure Functions secrets/keys
-- **`$`-prefixed containers** (e.g., `$logs`, `$blobchangefeed`) — Azure system containers
-
-These containers must NEVER be deleted, especially during seeding, as deleting them breaks the deployed Azure Function.
-
-### AttachmentZipHttpTestFunction — Debug-Only Compilation
-
-`AttachmentZipHttpTestFunction.cs` is wrapped in `#if DEBUG` / `#endif`. This HTTP-triggered test function is only compiled in Debug builds and is **excluded from production deployments** (VS Publish uses Release configuration).
-
-### SQL Table Name in AttachmentZipProcessor
-
-The raw SQL query in `NoteExistsInDatabaseAsync()` uses `Note` (the actual SQL table name configured via `modelBuilder.Entity<Note>().ToTable("Note")`), NOT `Notes` (which is only the EF Core `DbSet` property name).
-
-```sql
-SELECT COUNT(1) FROM Note WHERE Id = @NoteId
-```
-
-### Azure Function Environment Variables (func-HW6)
-
-Required App Settings (in Azure Portal → Environment variables → App Settings tab):
-
-| Setting | Purpose |
-|---------|---------|
-| `ConnectionStrings__DefaultConnection` | SQL connection string with `Authentication=Active Directory Default` |
-| `AzureWebJobsStorage__blobServiceUri` | Managed identity storage access |
-| `AzureWebJobsStorage__clientId` | Managed identity client ID |
-| `AzureWebJobsStorage__credential` | `managedidentity` |
-| `AzureWebJobsStorage__queueServiceUri` | Queue endpoint for managed identity |
-| `AzureWebJobsStorage__tableServiceUri` | Table endpoint for managed identity |
-| `AttachmentZipRequests__clientId` | Queue trigger managed identity |
-| `AttachmentZipRequests__credential` | `managedidentity` |
-| `AttachmentZipRequests__queueServiceUri` | Queue endpoint for zip requests |
-| `StorageBlobServiceUri` | Blob service URI for processor |
-
-**Important:** Visual Studio Zip Deploy does NOT sync `local.settings.json` to Azure. Settings configured in Azure Portal remain intact after publish.
-
----
-
-## 4.2.14 Extra Credit — HW6NoteKeeperEx1
-
-The solution ending with **Ex1** (`HW6NoteKeeperEx1`) is being updated with:
-
-> **Extra Credit 1: Add support for a job status tracking table.**
-
-This feature adds a database table to track the status of background zip-creation jobs, enabling the API to report job progress and completion status to clients.
-
----
-
-## 4.2.15 Extra Credit 1 — Azure Resources Created (HW6NoteKeeperEx1 only)
-
-### Azure Table: Jobs
-
-An Azure Table named **`Jobs`** was created in the `st4hw3` storage account for tracking job status.
-
-| Setting | Value |
-|---------|-------|
-| Table name | `Jobs` |
-| Storage account | `st4hw3` |
-| URL | `https://st4hw3.table.core.windows.net/Jobs` |
-| Purpose | Track status of background zip-creation jobs (Extra Credit 1) |
-
-### Azure Queue: attachment-zip-requests-ex1
-
-A new Azure Storage Queue named **`attachment-zip-requests-ex1`** was created in the `st4hw3` storage account, dedicated to the Ex1 solution.
-
-| Setting | Value |
-|---------|-------|
-| Queue name | `attachment-zip-requests-ex1` |
-| Storage account | `st4hw3` |
-| URL | `https://st4hw3.queue.core.windows.net/attachment-zip-requests-ex1` |
-| Poison queue | `attachment-zip-requests-ex1-poison` (auto-created by Azure Functions runtime) |
-| Purpose | Separate queue for Ex1 zip requests, so Ex1 and the original solution do not interfere with each other |
-
-**Note:** The original HW6NoteKeeper solution continues to use `attachment-zip-requests`. The Ex1 solution uses `attachment-zip-requests-ex1`.
-
-
----
-
-## 4.2.16 Extra Credit 1 — Controller Updates & Queue Routing
-
-### Context
-The Ex1 solution (HW6NoteKeeperEx1) adds job-status tracking via an Azure Table (Jobs). To keep the original HW6 solution intact and backward-compatible, the following design was adopted:
-
-### Original POST — RequestZipCreation (unchanged behavior)
-The original RequestZipCreation POST in NoteKeeperZipAttachmentController:
-- Route: POST notes/{noteId}/attachmentzipfiles
-- Still enqueues to ttachment-zip-requests (original queue)
-- **Does NOT insert a row into the Jobs table** — the legacy AttachmentZipFunction has no job-tracking logic
-- Returns 202 Accepted with Location pointing to the zip blob URL
-
-### New POST — RequestZipCreationEx1 (Ex1 solution only)
-A new POST method was added to NoteKeeperZipAttachmentControllerEx1 in the Ex1 solution:
-- Route: POST notes/{noteId}/attachmentzipfilesex1
-- Enqueues to ttachment-zip-requests-ex1 (Ex1-specific queue)
-- **Inserts a Queued row into the Jobs table** before enqueuing
-- Returns 202 Accepted with Location pointing to the job-status endpoint: 
-otes/{noteId}/attachmentzipfiles/jobs/{zipFileId}
-- Triggered by AttachmentZipFunctionEx1, which updates the Jobs row through its lifecycle
-
-### Two Queue Names in StorageOperationalSettings
-In the Ex1 solution, StorageOperationalSettings now carries two queue name properties:
-
-| Property | Default | Queue |
-|----------|---------|-------|
-| ZipRequestsQueueName | ttachment-zip-requests-ex1 | Used by the new Ex1 POST |
-| ZipRequestsLegacyQueueName | ttachment-zip-requests | Used by the old original POST |
-
-This separation means the two functions (AttachmentZipFunction and AttachmentZipFunctionEx1) never compete for the same queue messages.
-
-### NoteKeeperZipAttachmentControllerEx1 — All Endpoints
-| Method | Route | Description |
-|--------|-------|-------------|
-| POST | 
-otes/{noteId}/attachmentzipfilesex1 | Create zip job with Jobs row + ex1 queue |
-| GET | 
-otes/{noteId}/attachmentzipfiles/jobs/{zipFileId} | Get specific job status |
-| GET | 
-otes/{noteId}/attachmentzipfiles/jobs | Get all job statuses for a note |

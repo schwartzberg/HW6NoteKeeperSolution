@@ -8,12 +8,15 @@ using HW6NoteKeeper.Data;
 using HW6NoteKeeper.Settings;
 using Microsoft.ApplicationInsights;
 using Microsoft.ApplicationInsights.AspNetCore.Extensions;
+using Microsoft.ApplicationInsights.DataContracts;
 using Microsoft.ApplicationInsights.Extensibility;
+using Microsoft.ApplicationInsights.Extensibility.Implementation.Tracing;
 using Microsoft.ApplicationInsights.Extensibility.PerfCounterCollector.QuickPulse;
 using Microsoft.ApplicationInsights.SnapshotCollector;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.OpenApi;
+using System.Globalization;
 using System.Reflection;
 
 namespace HW6NoteKeeper
@@ -391,6 +394,8 @@ namespace HW6NoteKeeper
             // Register the BlobContainerClient with dependency injection using MANAGED IDENTITIES
             builder.Services.AddSingleton(new BlobContainerClient(new Uri(containerEndPoint), managedIdentityCredential));
         }
+
+         
     } 
 }
 

@@ -653,3 +653,46 @@ To use these patterns in other ASP.NET Core projects:
 ## End-to-End Testing Guidelines
 
 - **Never run E2E tests (NoteKeeperControllerE2ETests) automatically.** E2E tests point to a live Azure production URL and require the user to publish the project first. Always ask the user to publish before E2E tests are run, and only run integration tests (NoteKeeperControllerIntegrationTests) automatically.
+
+
+---
+
+# HW6-Specific Standing Rules (added 2026-05-02)
+
+These rules supersede or supplement the rules above for HW6 work. If they conflict with anything earlier in this file, **the HW6 rules win**.
+
+## H1. Step-by-step coordination
+- HW6 implementation proceeds **one step at a time**. Propose a step, then **wait for an explicit "go"** from the user before touching any code or running any change-state command.
+- Make **no assumptions**. Whenever a requirement, file location, value, or design choice is unclear, **ask first**.
+- Division of labor:
+  - **Assistant** edits the .NET code (controllers, `Program.cs`, project files, etc.).
+  - **User** performs Azure Portal changes (App Service settings, App Insights, API Management, products, policies, …) — unless the user and assistant explicitly agree the assistant should run an `az` command on their behalf.
+
+## H2. The 180-second rule (no infinite loops)
+- If **any single tool invocation, command, agent, or wait** runs for more than **180 seconds** without producing the final result, the assistant **must stop**.
+- After stopping, the assistant must:
+  1. Summarize where it is at (last useful output, what is still pending).
+  2. Ask the user whether to proceed, retry differently, or abandon.
+- This rule applies to: `powershell` sync waits, `read_powershell` polls, background `task` agents, `read_agent` waits, log-stream tails, deployment polling, build/test commands, and anything else that can block.
+- Prefer **bounded** operations (e.g., `az webapp log download` rather than `az webapp log tail`; `--tail N` rather than streaming) so the rule rarely triggers in practice.
+
+## H3. Mandatory prompt logging
+- **Every** user prompt — without exception and without asking — is appended to `HW6NoteKeeper/MyPrompts.md` as the next numbered entry, in the format Prompt → Context → Resolution → Key Learning.
+- This is automatic. The assistant never asks "should I log this?".
+
+## H4. ProjectNotes.md
+- `HW6NoteKeeper/ProjectNotes.md` is the TA-facing deliverable. Keep it current as HW6 progresses (App Service URLs, APIM gateway, product subscriptions, etc.).
+- HW4 extra-credit content has been removed and must **not** be reintroduced.
+- The `attachmentzipfiles` resource must **never** be exposed via API Management.
+
+## H5. Azure resource defaults for HW6
+- Default subscription: `2026 Assignments_Paul_Schwartzberg` (`1ba1c9cd-efc8-4259-a0a3-8a64e1ae9482`)
+- Tenant: `Paul Schwartzberg` (`d607a394-7dc0-4c7d-8b9e-a9ed69c728b9`)
+- Account: `paulschwartzberg@outlook.com`
+- HW6 App Service: `app-notekeeper-cscie94-ps-hw6` in resource group `rg_hw6`, runtime `DOTNETCORE|10.0`, Sweden Central
+- All change-state Azure CLI commands (`create/update/delete/restart`) require explicit "go" from the user.
+
+## H6. Logs and diagnostics
+- Use `az webapp log download` (one-shot zip) rather than `az webapp log tail` (unbounded stream) by default.
+- The assistant may download logs without asking, but **must not** restart, redeploy, or change configuration without explicit "go".
+- If application stdout/stderr is missing from the docker.log, instruct the user to enable **Application logging (Filesystem)** in the portal before re-pulling logs — do not enable it via CLI without "go".
