@@ -16,6 +16,7 @@ using Microsoft.ApplicationInsights.SnapshotCollector;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.OpenApi;
+using Swashbuckle.AspNetCore.SwaggerGen;
 using System.Globalization;
 using System.Reflection;
 
@@ -67,7 +68,18 @@ namespace HW6NoteKeeper
 
             // Add services to the container. 
             builder.Services.AddControllers();
-            
+
+            // HW6 1.4: API Management requires CORS so the APIM developer-portal
+            // test console (a different origin) can call the backend API.
+            // Register a permissive default policy; UseCors() below activates it.
+            builder.Services.AddCors(options =>
+            {
+                options.AddDefaultPolicy(policy =>
+                    policy.AllowAnyOrigin()
+                          .AllowAnyHeader()
+                          .AllowAnyMethod());
+            });
+
             // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
             //builder.Services.AddOpenApi();
 
@@ -76,6 +88,16 @@ namespace HW6NoteKeeper
             {
                 // Add nice title
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "Note Keeper", Version = "v1" });
+
+                // HW6 1.1: API Management requires every operation to have a unique
+                // operationId. By default Swashbuckle synthesizes IDs that may collide
+                // across controllers; using the C# method name (which we keep unique
+                // across all controllers per HW6 1.2) guarantees uniqueness.
+                c.CustomOperationIds(apiDesc =>
+                {
+                    return apiDesc.TryGetMethodInfo(out MethodInfo methodInfo) ?
+                                                        methodInfo.Name : null;
+                });
 
                 // Add documentation via C# XML Comments
                 var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
@@ -213,7 +235,19 @@ namespace HW6NoteKeeper
             // Code Note: Moved outside of env.IsDevelopment() so both 
             // Debug and Release are supported
 
-            app.UseSwagger();
+            app.UseSwagger(c =>
+            {
+                // HW6 1.3: API Management imports the OpenAPI document and the
+                // server URL inside it must match the actual host that served the
+                // document (otherwise APIM points "Try It" at the wrong address).
+                // Rewrite servers[0].url on every request from the incoming scheme/host.
+                c.PreSerializeFilters.Add((swagger, httpReq) =>
+                {
+                    swagger.Servers = new List<OpenApiServer>{
+                        new OpenApiServer { Url = $"{httpReq.Scheme}://{httpReq.Host.Value}" }
+                    };
+                });
+            });
 
             // Customize the UseSwaggerUI() 
             app.UseSwaggerUI(c =>
@@ -230,6 +264,11 @@ namespace HW6NoteKeeper
             //app.MapOpenApi();
 
             app.UseHttpsRedirection();
+
+            // HW6 1.4: Activate the default CORS policy registered above.
+            // Must come after UseRouting/UseHttpsRedirection and before UseAuthorization
+            // so that preflight OPTIONS requests are answered with CORS headers.
+            app.UseCors();
 
             app.UseAuthorization();
 

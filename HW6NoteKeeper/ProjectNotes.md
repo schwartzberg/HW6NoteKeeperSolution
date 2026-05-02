@@ -131,8 +131,8 @@ This section tracks the **HW6-specific** work — Azure API Management front-end
 - [ ] Administrator email: `paulschwartzberg@outlook.com`
 - [ ] Application Insights linked to the same AI instance from §4.2.2
 - [ ] Protocol settings configured per HW6 §3.7
-- [ ] APIM gateway URL recorded here:
-- [ ] APIM service name recorded here:
+- [x] APIM gateway URL recorded here: `https://apim-cscie-94-hw6.azure-api.net`
+- [x] APIM service name recorded here: `apim-CSCIE-94-HW6` (resource group: `rg_hw6`)
 
 ### 4.2.4 Connecting App Service ↔ APIM (HW6 §4)
 - [ ] API Management definition (full URL to swagger.json) added to App Service
@@ -150,23 +150,23 @@ This section tracks the **HW6-specific** work — Azure API Management front-end
 
 ### 4.2.6 Basic Product (HW6 §6)
 - [ ] Product `Basic` (id `basic`) created
-- [ ] Description: `Provides basic note keeper functionality with no attachment support.`
-- [ ] Published = true, Requires Subscription = true, Requires Approval = false
-- [ ] No subscription count limit, no legal terms
-- [ ] Subscription added: display name `Basic Subscription`, name `BasicSubscription`
-- [ ] Attachments operation removed from Note Keeper Basic API
-- [ ] Primary Key recorded here:
+- [x] Description: `Provides basic note keeper functionality with no attachment support.`
+- [x] Published = true, Requires Subscription = true, Requires Approval = false
+- [x] No subscription count limit, no legal terms
+- [x] Subscription added: display name `Basic Subscription`, name `BasicSubscription`
+- [x] Attachments operation removed from Note Keeper Basic API
+- [x] Primary Key recorded here: `b45b315cc0c54eb5a4ff690d7c09d164`
 
 ### 4.2.7 Standard Product (HW6 §7)
-- [ ] Product `Standard` (id `standard`) created
-- [ ] Description: `Provides standard note keeper functionality with attachment support.`
-- [ ] Published = true, Requires Subscription = true, Requires Approval = false
-- [ ] No subscription count limit, no legal terms
-- [ ] Subscription added: display name `Standard Subscription`, name `StandardSubscription`
-- [ ] Primary Key recorded here:
+- [x] Product `Standard` (id `standard`) created
+- [x] Description: `Provides standard note keeper functionality with attachment support.`
+- [x] Published = true, Requires Subscription = true, Requires Approval = false
+- [x] No subscription count limit, no legal terms
+- [x] Subscription added: display name `Standard Subscription`, name `StandardSubscription`
+- [x] Primary Key recorded here: `60686b7bb4cc4e3cb49ff6af5be3c09d`
 
 ### 4.2.8 Location Header Override (HW6 §8)
-- [ ] `set-header` policy applied to all operations that return a `location` header, rewriting the host portion to the APIM gateway host:
+- [x] `set-header` policy applied to All Operations outbound on both Note Keeper Basic and Note Keeper Standard, rewriting the host portion to the APIM gateway host:
   ```xml
   <set-header name="location" exists-action="override">
       <value>@(context.Response.Headers.GetValueOrDefault("location", "").Replace(context.Request.Url.Host, context.Request.OriginalUrl.Host))</value>
@@ -174,14 +174,131 @@ This section tracks the **HW6-specific** work — Azure API Management front-end
   ```
 
 ### 4.2.9 Custom Response Headers (HW6 §9)
-- [ ] `X-CourseName: CSCI-E94` added to all operations on both Basic and Standard
-- [ ] `X-SubscriptionName` added to all operations on both Basic and Standard, dynamically populated from the subscription's name via APIM policy expression
+- [x] `X-CourseName: CSCI-E94` added to All Operations on both Note Keeper Basic and Note Keeper Standard
+- [x] `X-SubscriptionName` added to All Operations on both APIs, dynamically populated via `@(context.Subscription.Name)` — verified returning correct subscription name (e.g., `Basic Subscription` when called with Basic key)
 
 ### 4.2.10 HW6 Extra Credit Selected
-*To be decided in coordination with the user. Options listed in HW6 instructions are:*
-- *EC1 — Add cache support (Redis Basic 250 MB) for list-of-notes and list-of-attachments operations, 20 s TTL*
-- *EC2 — Apply `json-to-xml` transformation policy to notes responses when `Accept: application/xml`*
-- *EC3 — Add a `Free` product tier with rate-limit policy (5 calls/min) and `X-Free-NotesCalls-Remaining` / `-Limit` / `Retry-After` headers*
+
+### 4.2.10 HW6 Extra Credit Selected
+
+#### XC1 — Redis Cache ✅
+
+**Redis Cache Instance:** `redis-apimgmtcache-cscie94` (Basic C0 250MB, Sweden Central, `rg_hw6`)  
+**Linked to APIM:** External cache → Default region → Access Key auth connection string
+
+**Cache policies applied to (operation level):**
+- **Note Keeper Standard** — `GET /NoteKeeper` (list of notes, `?tagName=` filter supported via `<vary-by-query-parameter>`)
+- **Note Keeper Basic** — `GET /NoteKeeper` (list of notes, same policy)
+- **Note Keeper Standard** — `GET /notes/{noteId}/attachments` (list of attachments)
+
+**Inbound policy (on each cached operation):**
+```xml
+<set-header name="Cache-Control" exists-action="delete" />
+<cache-lookup vary-by-developer="false" vary-by-developer-groups="false"
+    allow-private-response-caching="false" must-revalidate="false"
+    downstream-caching-type="none" caching-type="external">
+    <vary-by-query-parameter>tagName</vary-by-query-parameter>
+</cache-lookup>
+```
+*(The `set-header` delete strips the browser's `Cache-Control: no-cache, no-store` before cache-lookup — without it, every request is treated as a cache-miss. `caching-type="external"` explicitly targets the linked Redis instance.)*
+
+**Outbound policy (on each cached operation):**
+```xml
+<cache-store duration="120" cache-response="true" />
+```
+
+**Note on Trace:** The APIM portal Trace button creates a new temporary authorization token per click — this token's sequential ID becomes part of the cache key, so Trace will always show cache-miss. Testing must be done via direct HTTP calls (PowerShell or curl).
+
+**Testing — PowerShell:**
+```powershell
+$headers = @{ "Ocp-Apim-Subscription-Key" = "60686b7bb4cc4e3cb49ff6af5be3c09d" }
+$url = "https://apim-cscie-94-hw6.azure-api.net/standard/NoteKeeper"
+1..5 | ForEach-Object {
+    $t = Measure-Command { Invoke-RestMethod $url -Headers $headers }
+    Write-Host "Call $_`: $([math]::Round($t.TotalMilliseconds))ms"
+}
+```
+
+**Testing — curl:**
+```bash
+for i in 1 2 3 4 5; do
+  time curl -s -H "Ocp-Apim-Subscription-Key: 60686b7bb4cc4e3cb49ff6af5be3c09d" \
+    https://apim-cscie-94-hw6.azure-api.net/standard/NoteKeeper > /dev/null
+done
+```
+
+**Actual test results (client machine, Denmark → Sweden Central):**
+- Call 1: 348ms — cache-miss (backend call)
+- Call 2: 82ms — cache-hit ✅
+- Call 3: 47ms — cache-hit ✅
+- Call 4: 48ms — cache-hit ✅
+- Call 5: 42ms — cache-hit ✅
+
+**~8× speedup** (348ms → 42ms) confirms Redis caching is fully operational.
+
+---
+
+#### XC2 — JSON-to-XML Transformation ✅
+
+**Applied to:** Both **Note Keeper Standard** and **Note Keeper Basic** — All Operations outbound policy.  
+Transformation is conditional: only activates when the caller sends `Accept: application/xml`. All other requests continue to receive JSON responses unchanged.
+
+**Outbound policy additions (appended to existing All Operations outbound):**
+```xml
+<json-to-xml apply="always" consider-accept-header="true" parse-date="false" />
+<!-- Wrap converted XML in root element (workaround required as of 2026/04/28) -->
+<choose>
+    <when condition="@(context.Response.Headers.GetValueOrDefault("Content-Type", "").StartsWith("application/xml", StringComparison.OrdinalIgnoreCase))">
+        <set-body>@{
+            string xmlContent = context.Response.Body.As<string>(preserveContent: true);
+            return "<document>" + xmlContent + "</document>";
+        }</set-body>
+        <set-header name="Content-Type" exists-action="override">
+            <value>application/xml</value>
+        </set-header>
+    </when>
+</choose>
+```
+
+*(The `<document>` wrapper is required because `json-to-xml` on a JSON array produces multiple XML elements with no root, which is invalid XML. The `<choose>` only fires after `json-to-xml` has run and set Content-Type to `application/xml`.)*
+
+**Testing — PowerShell (XML response):**
+```powershell
+$headers = @{
+    "Ocp-Apim-Subscription-Key" = "60686b7bb4cc4e3cb49ff6af5be3c09d"
+    "Accept" = "application/xml"
+}
+Invoke-WebRequest "https://apim-cscie-94-hw6.azure-api.net/standard/NoteKeeper" `
+    -Headers $headers | Select-Object -ExpandProperty Content
+```
+
+**Testing — PowerShell (JSON response — no Accept header):**
+```powershell
+$headers = @{ "Ocp-Apim-Subscription-Key" = "60686b7bb4cc4e3cb49ff6af5be3c09d" }
+Invoke-RestMethod "https://apim-cscie-94-hw6.azure-api.net/standard/NoteKeeper" -Headers $headers
+```
+
+**Testing — curl:**
+```bash
+# XML response
+curl -s -H "Ocp-Apim-Subscription-Key: 60686b7bb4cc4e3cb49ff6af5be3c09d" \
+     -H "Accept: application/xml" \
+     https://apim-cscie-94-hw6.azure-api.net/standard/NoteKeeper
+
+# JSON response (no Accept header)
+curl -s -H "Ocp-Apim-Subscription-Key: 60686b7bb4cc4e3cb49ff6af5be3c09d" \
+     https://apim-cscie-94-hw6.azure-api.net/standard/NoteKeeper
+```
+
+**Expected XML response format:**
+```xml
+<document>
+  <item><noteId>...</noteId><title>...</title>...</item>
+  <item><noteId>...</noteId><title>...</title>...</item>
+</document>
+```
+
+**Manually tested and confirmed working ✅**
 
 ---
 
@@ -206,7 +323,7 @@ All resources follow standard Azure naming conventions per the Cloud Adoption Fr
 
 **HW6 REST API (App Service):** *(to be recorded once the new HW6 App Service is created — see §4.2.2)*
 
-**HW6 API Management Gateway:** *(to be recorded once the APIM service is created — see §4.2.3)*
+**HW6 API Management Gateway:** `https://apim-cscie-94-hw6.azure-api.net`
 
 > The Swagger UI is configured to load at the root path (`/`) of the App Service, so navigating to the base URL displays the interactive API documentation.
 

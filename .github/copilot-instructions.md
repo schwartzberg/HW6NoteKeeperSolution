@@ -695,4 +695,12 @@ These rules supersede or supplement the rules above for HW6 work. If they confli
 ## H6. Logs and diagnostics
 - Use `az webapp log download` (one-shot zip) rather than `az webapp log tail` (unbounded stream) by default.
 - The assistant may download logs without asking, but **must not** restart, redeploy, or change configuration without explicit "go".
+
+## H7. Pending prompt check — every 30 seconds
+- **ALWAYS** check for pending / queued user prompts every ~30 seconds, especially:
+  - While waiting on builds, tests, deployments, or any async operation
+  - During any pause or idle period
+  - **When the user has asked the assistant to stop** — check immediately for a follow-up prompt before taking any further action
+- If a pending prompt is found, stop the current operation (respecting H2), acknowledge the new prompt, and act on it.
+- This rule applies at all times and is never suspended.
 - If application stdout/stderr is missing from the docker.log, instruct the user to enable **Application logging (Filesystem)** in the portal before re-pulling logs — do not enable it via CLI without "go".
