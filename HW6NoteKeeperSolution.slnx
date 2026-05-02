@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/Solution Items/" />
+  <Project Path="HW6AzureFunctions/HW6AzureFunctions.csproj" />
+  <Project Path="HW6NoteKeeper.Tests/HW6NoteKeeper.Tests.csproj" />
+  <Project Path="HW6NoteKeeper/HW6NoteKeeper.csproj" />
+</Solution>
