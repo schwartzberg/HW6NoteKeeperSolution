@@ -921,6 +921,18 @@ Screenshot confirms requirements match PDF. Walking through XC3 step by step.
 
 ---
 
+## 52. XC3 — Rate Limiting Free Product
+
+**Prompt:**
+```
+yes -- please walk me through the steps (screenshot of XC3 requirements)
+```
+
+**Resolution:**
+XC3: Create Free product (clone of Basic), rate-limit 5 calls/60s, headers: X-Free-NotesCalls-Remaining (not on 429), X-Free-NotesCalls-Limit (always), Retry-After (on 429 only). Walking user through portal steps.
+
+---
+
 ## 51. XC2 — Works! Update ProjectNotes with XC1 and XC2
 
 **Prompt:**

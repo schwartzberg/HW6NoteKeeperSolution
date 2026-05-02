@@ -302,6 +302,88 @@ curl -s -H "Ocp-Apim-Subscription-Key: 60686b7bb4cc4e3cb49ff6af5be3c09d" \
 
 ---
 
+#### XC3 — Free Product with Rate Limiting ✅
+
+**Applied to:** **Free** product (product-level policy).  
+The Free product contains the same **Note Keeper Basic** API as the Basic product. Rate limit: 5 calls per 60-second window per subscription.
+
+**Free product details:**
+- Display name: `Free` | Product ID: `free`
+- API: Note Keeper Basic (shared, no clone needed)
+- Subscription key (Free-Subscription primary): `f5914deacee04cd6a8f0d4deea5caafe`
+
+**Product-level policy (Free → Policies):**
+```xml
+<policies>
+    <inbound>
+        <base />
+        <rate-limit calls="5" renewal-period="60"
+            remaining-calls-variable-name="remainingCallsCount" />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+        <set-header name="X-Free-NotesCalls-Limit" exists-action="override">
+            <value>5</value>
+        </set-header>
+        <set-header name="X-Free-NotesCalls-Remaining" exists-action="override">
+            <value>@(context.Variables.GetValueOrDefault<int>("remainingCallsCount", 0).ToString())</value>
+        </set-header>
+    </outbound>
+    <on-error>
+        <base />
+        <set-header name="X-Free-NotesCalls-Limit" exists-action="override">
+            <value>5</value>
+        </set-header>
+        <choose>
+            <when condition="@(context.Response.StatusCode == 429)">
+                <set-header name="Retry-After" exists-action="override">
+                    <value>60</value>
+                </set-header>
+            </when>
+        </choose>
+    </on-error>
+</policies>
+```
+
+**Header behaviour:**
+| Header | On 200 | On 429 |
+|--------|--------|--------|
+| `X-Free-NotesCalls-Limit` | ✅ returned (value: 5) | ✅ returned (value: 5) |
+| `X-Free-NotesCalls-Remaining` | ✅ returned (counts down 4→3→2→1→0) | ❌ absent |
+| `Retry-After` | ❌ absent | ✅ returned (value: 60) |
+
+**Testing — PowerShell (run 6 calls, 5th triggers 429):**
+```powershell
+$key = "f5914deacee04cd6a8f0d4deea5caafe"
+$url = "https://apim-cscie-94-hw6.azure-api.net/NoteKeeper"
+
+1..6 | ForEach-Object {
+    Write-Host "Call $_" -ForegroundColor Cyan
+    try {
+        $r = Invoke-WebRequest -Uri $url -Headers @{"Ocp-Apim-Subscription-Key"=$key}
+        Write-Host "  Status: $($r.StatusCode)"
+        Write-Host "  X-Free-NotesCalls-Limit:     $($r.Headers['X-Free-NotesCalls-Limit'])"
+        Write-Host "  X-Free-NotesCalls-Remaining: $($r.Headers['X-Free-NotesCalls-Remaining'])"
+    } catch {
+        $code = $_.Exception.Response.StatusCode.value__
+        Write-Host "  Status: $code" -ForegroundColor Red
+        $hdrs = $_.Exception.Response.Headers
+        Write-Host "  X-Free-NotesCalls-Limit: $($hdrs['X-Free-NotesCalls-Limit'])"
+        Write-Host "  Retry-After: $($hdrs['Retry-After'])"
+    }
+    Start-Sleep -Milliseconds 200
+}
+```
+
+**Manually tested and confirmed working ✅**  
+Calls 1–4: HTTP 200, headers present, Remaining counts down to 0.  
+Call 5: HTTP 429, `X-Free-NotesCalls-Limit: 5`, `Retry-After: 60`, no Remaining header.
+
+---
+
 ## 5. Microsoft Foundry and Project Name
 
 **Microsoft Foundry Name:** `ai-csscie94-foundry`  
